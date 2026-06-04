@@ -28,15 +28,19 @@ class FrontendStack(cdk.Stack):
             "arn:aws:acm:us-east-1:902672427642:certificate/60d70fbe-d2d5-4417-9e90-aafc4958cc56",
         )
 
-        # ── CloudFront Function — /passwords routing ────────────────
-        # Handles two cases without relying on global error responses:
-        #   /passwords          → 301 redirect to /passwords/
-        #   /passwords/<path>   → rewrite to /passwords/index.html (SPA)
+        # ── CloudFront Function — sub-path routing ──────────────────
+        # Handles clean URLs for each SPA-style sub-path:
+        #   /passwords              → 301 redirect to /passwords/
+        #   /passwords/<path>       → rewrite to /passwords/index.html
+        #   /millywhitefield        → 301 redirect to /millywhitefield/
+        #   /millywhitefield/<path> → rewrite to /millywhitefield/index.html
         router = cloudfront.Function(
             self, "PasswordsRouter",
             code=cloudfront.FunctionCode.from_inline("""
 function handler(event) {
     var uri = event.request.uri;
+
+    // /passwords routing
     if (uri === '/passwords') {
         return {
             statusCode: 301,
@@ -46,7 +50,22 @@ function handler(event) {
     }
     if (uri.startsWith('/passwords/') && uri.lastIndexOf('.') < uri.lastIndexOf('/')) {
         event.request.uri = '/passwords/index.html';
+        return event.request;
     }
+
+    // /millywhitefield routing
+    if (uri === '/millywhitefield') {
+        return {
+            statusCode: 301,
+            statusDescription: 'Moved Permanently',
+            headers: { location: { value: '/millywhitefield/' } }
+        };
+    }
+    if (uri.startsWith('/millywhitefield/') && uri.lastIndexOf('.') < uri.lastIndexOf('/')) {
+        event.request.uri = '/millywhitefield/index.html';
+        return event.request;
+    }
+
     return event.request;
 }
 """),
@@ -83,6 +102,20 @@ function handler(event) {
             prune=False,
             distribution=distribution,
             distribution_paths=["/index.html", "/styles.css", "/cards.js", "/vault.js"],
+        )
+
+        # ── Deploy Milly Whitefield portfolio ───────────────────────
+        # Served at sutton5050.com/millywhitefield/
+        # Self-contained in milly-whitefield/ — easy to move to its own
+        # domain later by copying the folder and removing this block.
+        s3deploy.BucketDeployment(
+            self, "DeployMillyWhitefield",
+            sources=[s3deploy.Source.asset("../milly-whitefield")],
+            destination_bucket=bucket,
+            destination_key_prefix="millywhitefield",
+            prune=False,
+            distribution=distribution,
+            distribution_paths=["/millywhitefield/*"],
         )
 
         # ── Outputs ─────────────────────────────────────────────────
